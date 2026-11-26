@@ -1,0 +1,6 @@
+.git
+.archify
+.env
+.env.local
+output
+target

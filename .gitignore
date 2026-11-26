@@ -1,0 +1,8 @@
+/target/
+/output/
+/.archify/
+/.idea/
+/.vscode/
+*.iml
+/.env
+/.env.local
