@@ -2,8 +2,8 @@ package io.github.rui88.memory;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -20,6 +20,9 @@ import org.springframework.web.client.RestClient;
 
 @Component
 public class MemosMemoryProvider implements MemoryProvider {
+    private static final int FEEDBACK_CONTEXT_MESSAGES = 12;
+    private static final int FEEDBACK_MESSAGE_CHARACTERS = 1500;
+
     private final RestClient reads;
     private final RestClient writes;
     private final String owner;
@@ -91,41 +94,6 @@ public class MemosMemoryProvider implements MemoryProvider {
         return !addBatch(key, candidate.scope(), List.of(candidate)).isEmpty();
     }
 
-    List<Hit> conflictCandidates(ConversationKey key, Scope scope) {
-        requireOwner();
-        String cube = scope.cube(key);
-        ensureCube(reads, cube);
-        Map<String, Hit> hits = new LinkedHashMap<>();
-        int pageSize = 100;
-        for (int page = 1; ; page++) {
-            JsonNode result = product(reads, "/get_memory", Map.of(
-                    "user_id", owner, "mem_cube_id", cube, "page", page, "page_size", pageSize,
-                    "include_preference", true, "include_tool_memory", false, "include_skill_memory", false));
-            if (!result.isObject()) {
-                throw new IllegalStateException("MemOS did not return Cube memory data");
-            }
-            int total = 0;
-            for (String type : List.of("text_mem", "pref_mem")) {
-                for (JsonNode group : result.path(type)) {
-                    if (!cube.equals(group.path("cube_id").asText())) {
-                        continue;
-                    }
-                    total = Math.max(total, group.path("total_nodes").asInt());
-                    for (JsonNode record : group.path("memories")) {
-                        String id = id(record);
-                        String text = content(record);
-                        if (!id.isBlank() && !text.isBlank()) {
-                            hits.putIfAbsent(id, new Hit(id, scope, text, null));
-                        }
-                    }
-                }
-            }
-            if ((long) page * pageSize >= total) {
-                return new ArrayList<>(hits.values());
-            }
-        }
-    }
-
     List<String> addBatch(ConversationKey key, Scope scope, List<Candidate> candidates) {
         requireOwner();
         String cube = scope.cube(key);
@@ -149,10 +117,10 @@ public class MemosMemoryProvider implements MemoryProvider {
                     .toList()));
         }
         JsonNode result = product(writes, "/add", request);
-        List<String> added = new ArrayList<>();
         if (!result.isArray()) {
-            return added;
+            throw new IllegalStateException("MemOS did not return a valid add response");
         }
+        List<String> added = new ArrayList<>();
         for (JsonNode record : result) {
             String id = id(record);
             String returnedCube = record.path("cube_id").asText(cube);
@@ -163,26 +131,46 @@ public class MemosMemoryProvider implements MemoryProvider {
         return added;
     }
 
-    Set<String> confirmedContents(List<String> ids) {
-        JsonNode result = product(reads, "/get_memory_by_ids", ids);
-        Set<String> contents = new HashSet<>();
-        for (JsonNode record : result.path("memories")) {
-            if (ids.contains(id(record))) {
-                String text = content(record);
-                if (!text.isBlank()) {
-                    contents.add(MemoryText.normalized(text));
-                }
+    void feedback(ConversationKey key, Candidate correction, List<Message.Stored> history) {
+        requireOwner();
+        String cube = correction.scope().cube(key);
+        ensureCube(writes, cube);
+        Map<String, Object> request = new HashMap<>();
+        request.put("user_id", owner);
+        request.put("session_id", key.value());
+        request.put("writable_cube_ids", List.of(cube));
+        request.put("feedback_content", correction.content());
+        request.put("history", feedbackHistory(history, correction.sourceSequence()));
+        request.put("async_mode", "sync");
+        request.put("corrected_answer", false);
+        JsonNode result = product(writes, "/feedback", request);
+        for (JsonNode item : result) {
+            JsonNode record = item.path("record");
+            if (record.path("add").size() > 0 || record.path("update").size() > 0) {
+                return;
             }
         }
-        return contents;
+        throw new IllegalStateException("MemOS did not confirm a memory correction");
+    }
+
+    private static List<Map<String, String>> feedbackHistory(List<Message.Stored> history, long sourceSequence) {
+        List<Message> recent = new ArrayList<>();
+        for (int index = history.size() - 1; index >= 0 && recent.size() < FEEDBACK_CONTEXT_MESSAGES; index--) {
+            Message.Stored entry = history.get(index);
+            Message message = entry.message();
+            if ((sourceSequence == 0 || entry.sequence() <= sourceSequence)
+                    && (message.role() == Message.Role.USER || message.role() == Message.Role.ASSISTANT)
+                    && !message.content().isBlank() && !MemoryJudge.sensitive(message.content())) {
+                recent.add(message);
+            }
+        }
+        Collections.reverse(recent);
+        return recent.stream().map(message -> Map.of("role", message.role().wireValue(),
+                "content", MemoryText.limit(message.content(), FEEDBACK_MESSAGE_CHARACTERS))).toList();
     }
 
     private static String id(JsonNode record) {
         return record.path("memory_id").asText(record.path("id").asText(""));
-    }
-
-    private static String content(JsonNode record) {
-        return record.path("memory").asText(record.path("content").asText(""));
     }
 
     @Override

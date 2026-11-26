@@ -1,5 +1,6 @@
 package io.github.rui88.memory;
 
+import static io.github.rui88.memory.MemoryProvider.Category.CORRECTION;
 import static io.github.rui88.memory.MemoryProvider.Category.PREFERENCE;
 import static io.github.rui88.memory.MemoryProvider.Scope.AGENT;
 import static io.github.rui88.memory.MemoryProvider.Scope.USER;
@@ -28,7 +29,7 @@ import org.springframework.data.redis.core.ValueOperations;
 class MemoryBehaviorTest {
     private static final ConversationKey KEY = new ConversationKey("tenant", "person", "report", "session");
     private static final AgentMemorySettings.Options OPTIONS =
-            new AgentMemorySettings.Options(true, MemoryProvider.Kind.MEMOS, 20, true);
+            new AgentMemorySettings.Options(true, MemoryProvider.Kind.MYSQL, 20, true);
 
     @Test
     void modelReceivesOldContextAndOnlyMarksMatchingNewMessages() throws Exception {
@@ -36,7 +37,7 @@ class MemoryBehaviorTest {
         when(model.configured()).thenReturn(true);
         when(model.complete(anyString(), anyString())).thenReturn("""
                 {"memories":[{"content":"Write reports with conclusions first","scope":"USER",
-                  "category":"PREFERENCE","importance":7}]}
+                  "category":"PREFERENCE","importance":7,"sourceSequence":2}]}
                 """);
         ObjectMapper json = new ObjectMapper();
         MemoryJudge judge = new MemoryJudge(model, json);
@@ -44,20 +45,21 @@ class MemoryBehaviorTest {
         Message.Stored fresh = new Message.Stored(2, new Message(Message.Role.USER, "Keep that format."));
 
         assertThat(judge.judge(List.of(old, fresh), List.of(fresh)))
-                .containsExactly(new MemoryProvider.Candidate("Write reports with conclusions first", USER, PREFERENCE, 7));
+                .containsExactly(new MemoryProvider.Candidate("Write reports with conclusions first", USER, PREFERENCE, 7, 2));
         ArgumentCaptor<String> input = ArgumentCaptor.forClass(String.class);
         verify(model).complete(anyString(), input.capture());
         var transcript = json.readTree(input.getValue());
         assertThat(transcript.path(0).path("new").asBoolean()).isFalse();
         assertThat(transcript.path(0).path("content").asText()).isEqualTo("Conclusions first.");
         assertThat(transcript.path(1).path("new").asBoolean()).isTrue();
+        assertThat(transcript.path(1).path("sequence").asLong()).isEqualTo(2);
     }
 
     @Test
     void replacementOnlyDeletesAfterConfirmedAdd() {
         MemoryProvider provider = mock(MemoryProvider.class);
         MemoryJudge judge = mock(MemoryJudge.class);
-        when(provider.kind()).thenReturn(MemoryProvider.Kind.MEMOS);
+        when(provider.kind()).thenReturn(MemoryProvider.Kind.MYSQL);
         var candidate = new MemoryProvider.Candidate("Conclusion first", USER, PREFERENCE, 7);
         var existing = List.of(new MemoryProvider.Hit("old", USER, "Evidence first", .9));
         when(provider.search(KEY, candidate.content(), Set.of(USER))).thenReturn(existing);
@@ -65,19 +67,56 @@ class MemoryBehaviorTest {
         when(provider.add(KEY, candidate)).thenReturn(false, true);
         LongMemory memory = new LongMemory(List.of(provider), new TextTokens(EncodingType.CL100K_BASE), judge);
 
-        assertThat(memory.save(KEY, OPTIONS, List.of(candidate))).isEqualTo(new LongMemory.WriteResult(0, 1));
+        assertThat(memory.save(KEY, OPTIONS, List.of(candidate), List.of())).isEqualTo(new LongMemory.WriteResult(0, 1));
         verify(provider, never()).delete(any(), any(), any());
-        assertThat(memory.save(KEY, OPTIONS, List.of(candidate))).isEqualTo(new LongMemory.WriteResult(1, 0));
+        assertThat(memory.save(KEY, OPTIONS, List.of(candidate), List.of())).isEqualTo(new LongMemory.WriteResult(1, 0));
         var ordered = inOrder(provider);
         ordered.verify(provider, org.mockito.Mockito.times(2)).add(KEY, candidate);
         ordered.verify(provider).delete(KEY, USER, List.of("old"));
     }
 
     @Test
+    void memosKeepsAnExplicitCorrectionAfterASimilarAdditionInTheSameCube() {
+        MemosMemoryProvider provider = mock(MemosMemoryProvider.class);
+        when(provider.kind()).thenReturn(MemoryProvider.Kind.MEMOS);
+        MemoryJudge judge = mock(MemoryJudge.class);
+        var initial = new MemoryProvider.Candidate("以后都用中文回复", USER, PREFERENCE, 7, 1);
+        var correction = new MemoryProvider.Candidate("以后都用英文回复", USER, CORRECTION, 8, 2);
+        assertThat(MemoryText.similar(initial.content(), correction.content())).isTrue();
+        var agentRule = new MemoryProvider.Candidate("Check totals first", AGENT, PREFERENCE, 7, 3);
+        var history = List.of(new Message.Stored(1, new Message(Message.Role.USER, initial.content())),
+                new Message.Stored(2, new Message(Message.Role.USER, "以后改用英文回复")),
+                new Message.Stored(3, new Message(Message.Role.USER, agentRule.content())));
+        when(provider.addBatch(KEY, USER, List.of(initial))).thenReturn(List.of());
+        when(provider.addBatch(KEY, AGENT, List.of(agentRule))).thenReturn(List.of("agent-id"));
+        var options = new AgentMemorySettings.Options(true, MemoryProvider.Kind.MEMOS, 20, true);
+        LongMemory memory = new LongMemory(List.of(provider), new TextTokens(EncodingType.CL100K_BASE), judge);
+
+        assertThat(memory.save(KEY, options, List.of(initial, correction, agentRule), history))
+                .isEqualTo(new LongMemory.WriteResult(2, 0));
+
+        var ordered = inOrder(provider);
+        ordered.verify(provider).addBatch(KEY, USER, List.of(initial));
+        ordered.verify(provider).feedback(KEY, correction, history);
+        ordered.verify(provider).addBatch(KEY, AGENT, List.of(agentRule));
+        verifyNoInteractions(judge);
+        verify(provider, never()).delete(any(), any(), any());
+    }
+
+    @Test
+    void ruleFallbackRecognizesAnExplicitChangeBeforeTheGeneralPreferenceRule() {
+        MemoryJudge judge = new MemoryJudge(mock(LanguageModel.class), new ObjectMapper());
+        var change = new Message.Stored(2, new Message(Message.Role.USER, "以后改用英文回复"));
+
+        assertThat(judge.judge(List.of(change), List.of(change)))
+                .containsExactly(new MemoryProvider.Candidate("以后改用英文回复", USER, CORRECTION, 8, 2));
+    }
+
+    @Test
     void filteringAndCountingApplyAcrossBothLongMemoryScopes() {
         TextTokens tokens = new TextTokens(EncodingType.CL100K_BASE);
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.kind()).thenReturn(MemoryProvider.Kind.MEMOS);
+        when(provider.kind()).thenReturn(MemoryProvider.Kind.MYSQL);
         List<MemoryProvider.Hit> hits = new ArrayList<>();
         hits.add(new MemoryProvider.Hit("low", USER, "irrelevant preference", .1));
         hits.add(new MemoryProvider.Hit("secret", USER, "password: abcdef123", 1.0));

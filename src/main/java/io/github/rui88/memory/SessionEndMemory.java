@@ -145,7 +145,7 @@ public class SessionEndMemory {
         if (fresh.isEmpty()) {
             return true;
         }
-        LongMemory.WriteResult result = memory.save(key, options, judge.judge(history, fresh));
+        LongMemory.WriteResult result = memory.save(key, options, judge.judge(history, fresh), history);
         log.info("Session memory processed through {}: {} written, {} failures",
                 snapshot.through(), result.written(), result.failures());
         if (result.failures() != 0) {

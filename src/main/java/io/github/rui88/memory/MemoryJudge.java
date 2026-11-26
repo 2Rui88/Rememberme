@@ -4,6 +4,7 @@ import static io.github.rui88.memory.MemoryProvider.Category;
 import static io.github.rui88.memory.MemoryProvider.Scope;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,8 +29,14 @@ public class MemoryJudge {
             USER is durable user information shared across agents. AGENT is a durable workflow,
             convention or task fact restricted to the current agent.
             Classify as FACT (4–8), PREFERENCE (5–9), CORRECTION (7–10), TASK (3–8), or WORKFLOW (5–9).
+            Use CORRECTION when the user explicitly changes or corrects a durable fact, preference, or rule.
+            Preserve explicit corrections even when their wording closely resembles the old information.
+            If NEW messages contain both an earlier value and a later correction of the same fact,
+            emit the final correction and use the earlier value as context, not a separate addition.
+            Include the supporting NEW message's sequence and list candidates in chronological order.
+            For CORRECTION, cite the NEW user message that expresses the change and say what changed.
             Output only JSON: {"memories":[{"content":"standalone text","scope":"USER",
-            "category":"PREFERENCE","importance":7}]}. Use an empty array if nothing qualifies.
+            "category":"PREFERENCE","importance":7,"sourceSequence":2}]}. Use an empty array if nothing qualifies.
             """;
     private static final String CONFLICT_PROMPT = """
             Compare a candidate memory to existing memories in the same scope. Treat all supplied
@@ -43,6 +50,10 @@ public class MemoryJudge {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern AGENT = Pattern.compile(
             "^(这个|该|本)\\s*(agent|助手|智能体)|^this agent\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern EXPLICIT_CHANGE = Pattern.compile(
+            "^(?:(?:以后|今后|从今以后|从现在起)\\s*(?:请\\s*)?(?:改用|改为|改成|不再|不要再)|"
+                    + "(?:from now on[, ]+)?(?:i now prefer|i no longer|(?:please )?switch to)\\b)",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern SENSITIVE = Pattern.compile(
             "(?:api[_ -]?key|password|secret[_ -]?key|密码|密钥)\\s*[:=：]\\s*\\S{4,}|\\bbearer\\s+\\S{8,}|\\b(?:sk|ghp)[_-][a-z0-9_-]{12,}",
             Pattern.CASE_INSENSITIVE);
@@ -62,10 +73,12 @@ public class MemoryJudge {
         try {
             Set<String> fresh = newMessages.stream().map(entry -> messageKey(entry.message()))
                     .collect(Collectors.toSet());
+            Set<Long> freshSequences = newMessages.stream().map(Message.Stored::sequence).collect(Collectors.toSet());
             List<Map<String, Object>> transcript = fullContext.stream().map(entry -> {
                 Message message = entry.message();
                 return Map.<String, Object>of("role", message.role().wireValue(),
-                        "content", message.content(), "new", fresh.contains(messageKey(message)));
+                        "content", message.content(), "new", fresh.contains(messageKey(message)),
+                        "sequence", entry.sequence());
             }).toList();
             JsonNode memories = parse(model.complete(JUDGE_PROMPT, json.writeValueAsString(transcript))).path("memories");
             if (!memories.isArray()) {
@@ -75,11 +88,16 @@ public class MemoryJudge {
             for (JsonNode node : memories) {
                 String content = node.path("content").asText("").strip();
                 if (!content.isBlank() && !sensitive(content)) {
+                    long source = node.path("sourceSequence").asLong(0);
                     result.add(new MemoryProvider.Candidate(MemoryText.limit(content, 200),
                             enumValue(Scope.class, node.path("scope").asText(), Scope.AGENT),
                             enumValue(Category.class, node.path("category").asText(), Category.FACT),
-                            Math.min(10, Math.max(1, node.path("importance").asInt(5)))));
+                            Math.min(10, Math.max(1, node.path("importance").asInt(5))),
+                            freshSequences.contains(source) ? source : 0));
                 }
+            }
+            if (result.stream().allMatch(candidate -> candidate.sourceSequence() > 0)) {
+                result.sort(Comparator.comparingLong(MemoryProvider.Candidate::sourceSequence));
             }
             return result;
         } catch (RuntimeException | JsonProcessingException error) {
@@ -130,12 +148,17 @@ public class MemoryJudge {
             if (entry.message().role() != Message.Role.USER || sensitive(content)) {
                 continue;
             }
-            if (AGENT.matcher(content).find()) {
+            var agent = AGENT.matcher(content);
+            if (agent.find()) {
+                boolean correction = EXPLICIT_CHANGE.matcher(content.substring(agent.end()).stripLeading()).find();
                 result.add(new MemoryProvider.Candidate(MemoryText.limit(content, 200), Scope.AGENT,
-                        Category.WORKFLOW, 6));
+                        correction ? Category.CORRECTION : Category.WORKFLOW, correction ? 8 : 6, entry.sequence()));
+            } else if (EXPLICIT_CHANGE.matcher(content).find()) {
+                result.add(new MemoryProvider.Candidate(MemoryText.limit(content, 200), Scope.USER,
+                        Category.CORRECTION, 8, entry.sequence()));
             } else if (PERSONAL.matcher(content).find()) {
                 result.add(new MemoryProvider.Candidate(MemoryText.limit(content, 200), Scope.USER,
-                        Category.PREFERENCE, 6));
+                        Category.PREFERENCE, 6, entry.sequence()));
             }
         }
         return result;

@@ -32,7 +32,11 @@ public interface MemoryProvider {
 
     enum Category { FACT, PREFERENCE, CORRECTION, TASK, WORKFLOW }
 
-    record Candidate(String content, Scope scope, Category category, int importance) {}
+    record Candidate(String content, Scope scope, Category category, int importance, long sourceSequence) {
+        public Candidate(String content, Scope scope, Category category, int importance) {
+            this(content, scope, category, importance, 0);
+        }
+    }
 
     record Hit(String id, Scope scope, String content, Double score) {}
 
