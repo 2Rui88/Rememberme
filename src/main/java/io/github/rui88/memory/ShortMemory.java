@@ -5,7 +5,6 @@ import static io.github.rui88.memory.Message.Role.SYSTEM;
 import static io.github.rui88.memory.Message.Role.TOOL;
 import static io.github.rui88.memory.Message.Role.USER;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -191,21 +190,36 @@ public class ShortMemory {
 
     private static List<Message.Stored> align(List<Message.Stored> messages) {
         List<Message.Stored> aligned = new ArrayList<>();
-        Set<String> calls = new HashSet<>();
         boolean started = false;
-        for (Message.Stored entry : messages) {
+        for (int index = 0; index < messages.size(); index++) {
+            Message.Stored entry = messages.get(index);
             Message message = entry.message();
             if (message.role() == USER) {
                 started = true;
-                calls.clear();
             }
-            if (message.role() == ASSISTANT && started) {
-                calls.clear();
-                message.toolCalls().forEach(call -> calls.add(call.id()));
+            if (!(message.role() == SYSTEM || started && message.role() != TOOL)) {
+                continue;
             }
-            if (message.role() == SYSTEM || started && (message.role() != TOOL || calls.remove(message.toolCallId()))) {
+            if (message.toolCalls().isEmpty()) {
                 aligned.add(entry);
+                continue;
             }
+            Set<String> pending = new HashSet<>();
+            message.toolCalls().forEach(call -> pending.add(call.id()));
+            int next = index + 1;
+            while (next < messages.size()) {
+                Message result = messages.get(next).message();
+                if (result.role() != TOOL || !pending.remove(result.toolCallId())) {
+                    break;
+                }
+                next++;
+            }
+            if (pending.isEmpty()) {
+                aligned.addAll(messages.subList(index, next));
+            } else if (!message.content().isBlank()) {
+                aligned.add(new Message.Stored(entry.sequence(), new Message(ASSISTANT, message.content())));
+            }
+            index = next - 1;
         }
         return List.copyOf(aligned);
     }

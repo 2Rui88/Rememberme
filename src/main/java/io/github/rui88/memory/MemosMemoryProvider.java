@@ -115,9 +115,11 @@ public class MemosMemoryProvider implements MemoryProvider {
     @Override
     public void delete(ConversationKey key, Scope scope, List<String> ids) {
         requireOwner();
-        JsonNode result = product(writes, "/delete_memory", Map.of("user_id", owner,
+        // The API treats user_id as a delete-by-filter selector, which is exclusive with memory_ids.
+        JsonNode result = product(writes, "/delete_memory", Map.of(
                 "writable_cube_ids", List.of(scope.cube(key)), "memory_ids", ids));
-        if (result.has("success") && !result.path("success").asBoolean()) {
+        if ((result.has("success") && !result.path("success").asBoolean())
+                || "failure".equalsIgnoreCase(result.path("status").asText())) {
             throw new IllegalStateException("MemOS did not confirm memory deletion");
         }
     }

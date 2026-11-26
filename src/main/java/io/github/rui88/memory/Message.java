@@ -21,7 +21,7 @@ public record Message(
         if (role == Role.TOOL && (toolCallId == null || toolCallId.isBlank())) {
             throw new IllegalArgumentException("Tool messages require a toolCallId");
         }
-        if (role != Role.TOOL && toolCallId != null || role != Role.ASSISTANT && !toolCalls.isEmpty()) {
+        if ((role != Role.TOOL && toolCallId != null) || (role != Role.ASSISTANT && !toolCalls.isEmpty())) {
             throw new IllegalArgumentException("Tool fields do not match the message role");
         }
     }

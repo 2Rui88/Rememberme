@@ -1,4 +1,31 @@
 services:
+  app:
+    build: .
+    profiles: ["app"]
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      DATABASE_URL: jdbc:mysql://mysql:3306/memory?connectionTimeZone=UTC
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-memory-local}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+      MEMORY_LONG_ENABLED: ${MEMORY_LONG_ENABLED:-false}
+      MEMORY_LONG_PROVIDER: ${MEMORY_LONG_PROVIDER:-MEMOS}
+      MEMORY_LLM_BASE_URL: ${MEMORY_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      MEMORY_LLM_MODEL: ${MEMORY_LLM_MODEL:-}
+      MEMORY_LLM_API_KEY: ${MEMORY_LLM_API_KEY:-}
+      MEMORY_MEMOS_BASE_URL: ${MEMORY_MEMOS_BASE_URL:-http://host.docker.internal:8000/product}
+      MEMORY_MEMOS_OWNER_ID: ${MEMORY_MEMOS_OWNER_ID:-}
+      MEMORY_MEMOS_AUTHORIZATION: ${MEMORY_MEMOS_AUTHORIZATION:-}
+      MEMORY_MEMOS_ADD_MODE: ${MEMORY_MEMOS_ADD_MODE:-sync}
+      MEMORY_MEM0_API_KEY: ${MEMORY_MEM0_API_KEY:-}
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
   mysql:
     image: mysql:8.4
     environment:
