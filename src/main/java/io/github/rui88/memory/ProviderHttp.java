@@ -2,7 +2,6 @@ package io.github.rui88.memory;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -22,7 +21,7 @@ final class ProviderHttp {
         return builder.build();
     }
 
-    static JsonNode post(RestClient client, String endpoint, Map<String, ?> parameters) {
+    static JsonNode post(RestClient client, String endpoint, Object parameters) {
         JsonNode body = client.post().uri(endpoint).body(parameters).retrieve().body(JsonNode.class);
         if (body == null || body.isNull()) {
             throw new IllegalStateException("Memory provider returned no body");

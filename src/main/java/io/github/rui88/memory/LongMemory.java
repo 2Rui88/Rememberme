@@ -5,10 +5,12 @@ import static io.github.rui88.memory.MemoryProvider.Scope;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +66,9 @@ public class LongMemory {
                 scope.add(candidate);
             }
         }
+        if (provider instanceof MemosMemoryProvider memos) {
+            return saveMemos(key, memos, byScope);
+        }
         int written = 0;
         int failures = 0;
         for (var entry : byScope.entrySet()) {
@@ -98,6 +103,72 @@ public class LongMemory {
         return new WriteResult(written, failures);
     }
 
+    private WriteResult saveMemos(ConversationKey key, MemosMemoryProvider memos,
+                                  Map<Scope, List<MemoryProvider.Candidate>> byScope) {
+        int written = 0;
+        int failures = 0;
+        for (var group : byScope.entrySet()) {
+            Scope scope = group.getKey();
+            try {
+                List<MemoryProvider.Hit> existing = memos.conflictCandidates(key, scope);
+                List<PendingMemory> pending = new ArrayList<>();
+                for (MemoryProvider.Candidate candidate : group.getValue()) {
+                    String normalized = MemoryText.normalized(candidate.content());
+                    if (existing.stream().anyMatch(hit -> normalized.equals(MemoryText.normalized(hit.content())))) {
+                        continue;
+                    }
+                    List<MemoryProvider.Hit> likelyConflicts = existing.stream()
+                            .sorted(Comparator.comparingDouble((MemoryProvider.Hit hit) ->
+                                    MemoryText.relevance(candidate.content(), hit.content())).reversed())
+                            .limit(10).toList();
+                    MemoryJudge.Resolution resolution = judge.resolve(candidate, likelyConflicts);
+                    if (resolution.store()) {
+                        pending.add(new PendingMemory(candidate, resolution.oldIds()));
+                    }
+                }
+                if (pending.isEmpty()) {
+                    continue;
+                }
+                Set<String> existingIds = existing.stream().map(MemoryProvider.Hit::id).collect(Collectors.toSet());
+                List<String> added = memos.addBatch(key, scope, pending.stream().map(PendingMemory::candidate).toList())
+                        .stream().filter(id -> !existingIds.contains(id)).toList();
+                if (added.isEmpty()) {
+                    failures++;
+                    log.warn("MemOS did not confirm an addition for scope {}", scope);
+                    continue;
+                }
+                written += added.size();
+                deleteConfirmedConflicts(key, memos, scope, pending, added);
+            } catch (RuntimeException error) {
+                failures++;
+                log.warn("MemOS Cube write or cleanup failed for scope {} ({})",
+                        scope, error.getClass().getSimpleName());
+            }
+        }
+        return new WriteResult(written, failures);
+    }
+
+    private void deleteConfirmedConflicts(ConversationKey key, MemosMemoryProvider memos, Scope scope,
+                                          List<PendingMemory> pending, List<String> added) {
+        if (pending.stream().allMatch(item -> item.oldIds().isEmpty())) {
+            return;
+        }
+        Set<String> confirmed = pending.size() == 1
+                ? Set.of(MemoryText.normalized(pending.get(0).candidate().content()))
+                : memos.confirmedContents(added);
+        Set<String> removed = new HashSet<>();
+        for (PendingMemory item : pending) {
+            if (confirmed.contains(MemoryText.normalized(item.candidate().content()))) {
+                removed.addAll(item.oldIds());
+            } else if (!item.oldIds().isEmpty()) {
+                log.warn("Keeping older MemOS memories without confirmation of their replacement in scope {}", scope);
+            }
+        }
+        if (!removed.isEmpty()) {
+            memos.delete(key, scope, List.copyOf(removed));
+        }
+    }
+
     private MemoryProvider provider(MemoryProvider.Kind kind) {
         return Objects.requireNonNull(providers.get(kind == null ? MemoryProvider.Kind.MYSQL : kind),
                 "Long memory provider unavailable");
@@ -121,4 +192,6 @@ public class LongMemory {
     }
 
     public record WriteResult(int written, int failures) {}
+
+    private record PendingMemory(MemoryProvider.Candidate candidate, List<String> oldIds) {}
 }
