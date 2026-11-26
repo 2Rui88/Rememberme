@@ -51,12 +51,12 @@ public class ConversationStore {
                 (rs, row) -> rs.getLong(1), key.value()).stream().findFirst().orElse(0L);
     }
 
-    public List<Message.Stored> recent(ConversationKey key, long through, int limit) {
+    public List<Message.Stored> recent(ConversationKey key, int limit) {
         List<Message.Stored> messages = jdbc.query("""
                 SELECT sequence_no, payload FROM conversation_messages
-                WHERE session_key = ? AND sequence_no <= ? ORDER BY sequence_no DESC LIMIT ?
+                WHERE session_key = ? ORDER BY sequence_no DESC LIMIT ?
                 """, (rs, row) -> new Message.Stored(rs.getLong(1), decode(rs.getString(2))),
-                key.value(), through, limit);
+                key.value(), limit);
         Collections.reverse(messages);
         return messages;
     }

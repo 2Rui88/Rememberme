@@ -28,12 +28,24 @@ public class ShortMemory {
     private static final int SUMMARY_BUDGET = 2000;
     private static final DefaultRedisScript<Long> UPDATE_LIST = new DefaultRedisScript<>("""
             local first = redis.call('LINDEX', KEYS[1], 0)
-            local cached = first and cjson.decode(first).sequence or 0
+            local cached = 0
+            if first then
+                local ok, entry = pcall(cjson.decode, first)
+                if ok and type(entry) == 'table' then cached = tonumber(entry.sequence) or 0 end
+            end
             local revision = tonumber(ARGV[2])
+            local newest = revision
+            if ARGV[1] == 'append' then newest = revision + #ARGV - 4 end
+            local known = tonumber(redis.call('GET', KEYS[2])) or 0
+            if math.max(cached, known) > newest then return 0 end
+            redis.call('SET', KEYS[2], newest, 'EX', tonumber(ARGV[4]))
             if ARGV[1] == 'append' then
-                if cached ~= revision then return 0 end
+                if cached >= newest then return 0 end
+                if cached ~= revision then
+                    redis.call('DEL', KEYS[1])
+                    return 0
+                end
             else
-                if cached > revision then return 0 end
                 redis.call('DEL', KEYS[1])
             end
             for i = 5, #ARGV do redis.call('LPUSH', KEYS[1], ARGV[i]) end
@@ -74,14 +86,11 @@ public class ShortMemory {
         return stored;
     }
 
-    public Window load(ConversationKey key, int contextRounds) {
-        if (contextRounds <= 0) {
-            return Window.EMPTY;
-        }
-        List<Message.Stored> messages = recent(key, Math.min(contextRounds, MAX_CACHED) * 3);
+    public Window load(ConversationKey key) {
+        List<Message.Stored> messages = align(recent(key));
         int total = messages.stream().mapToInt(this::cost).sum();
         if (total <= historyBudget) {
-            return new Window("", align(messages));
+            return new Window("", messages);
         }
 
         int remaining = historyBudget - SUMMARY_BUDGET;
@@ -99,39 +108,36 @@ public class ShortMemory {
                 align(messages.subList(first, messages.size())));
     }
 
-    private List<Message.Stored> recent(ConversationKey key, int limit) {
-        List<Message.Stored> cached = new ArrayList<>();
+    private List<Message.Stored> recent(ConversationKey key) {
         try {
-            List<String> rows = redis.opsForList().range(historyKey(key), 0, MAX_CACHED - 1);
-            if (rows != null) {
+            List<String> rows = redis.opsForList().range(historyKey(key), 0, -1);
+            if (rows != null && !rows.isEmpty()) {
+                List<Message.Stored> cached = new ArrayList<>(rows.size());
                 for (String row : rows) {
                     cached.add(json.readValue(row, Message.Stored.class));
+                }
+                if (contiguous(cached)) {
+                    Collections.reverse(cached);
+                    return cached;
                 }
             }
         } catch (RuntimeException | JsonProcessingException error) {
             log.debug("Conversation cache read failed", error);
-            cached.clear();
         }
-
-        // A small MySQL head read prevents serving stale hits after failed cache writes.
-        long head = store.head(key);
-        int wanted = (int) Math.min(Math.min(limit, MAX_CACHED), head);
-        if (wanted == 0) {
-            return List.of();
+        List<Message.Stored> history = store.recent(key, MAX_CACHED);
+        if (!history.isEmpty()) {
+            updateList(key, "replace", history.get(history.size() - 1).sequence(), history);
         }
-        if (cached.size() >= wanted && contiguous(cached, head, wanted)) {
-            List<Message.Stored> window = new ArrayList<>(cached.subList(0, wanted));
-            Collections.reverse(window);
-            return window;
-        }
-        List<Message.Stored> history = store.recent(key, head, MAX_CACHED);
-        updateList(key, "replace", head, history);
-        return history.subList(Math.max(0, history.size() - wanted), history.size());
+        return history;
     }
 
-    private static boolean contiguous(List<Message.Stored> history, long head, int count) {
-        for (int i = 0; i < count; i++) {
-            if (history.get(i).sequence() != head - i) {
+    private static boolean contiguous(List<Message.Stored> history) {
+        long head = history.get(0).sequence();
+        if (head < 1 || history.size() != Math.min(head, MAX_CACHED)) {
+            return false;
+        }
+        for (int i = 0; i < history.size(); i++) {
+            if (history.get(i).sequence() != head - i || history.get(i).message() == null) {
                 return false;
             }
         }
@@ -145,9 +151,16 @@ public class ShortMemory {
             for (Message.Stored entry : entries) {
                 args.add(json.writeValueAsString(entry));
             }
-            redis.execute(UPDATE_LIST, List.of(historyKey(key)), args.toArray());
+            redis.execute(UPDATE_LIST, List.of(historyKey(key), historyKey(key) + ":revision"), args.toArray());
         } catch (RuntimeException | JsonProcessingException error) {
             log.debug("Conversation cache update failed after durable write", error);
+            if ("append".equals(mode)) {
+                try {
+                    redis.delete(historyKey(key));
+                } catch (RuntimeException invalidationError) {
+                    log.debug("Conversation cache invalidation failed", invalidationError);
+                }
+            }
         }
     }
 
@@ -225,14 +238,12 @@ public class ShortMemory {
     }
 
     private static String historyKey(ConversationKey key) {
-        return "memory:history:" + key.value();
+        return "memory:history:{" + key.value() + "}";
     }
 
     private static String summaryKey(ConversationKey key) {
         return "memory:summary:" + key.value();
     }
 
-    public record Window(String summary, List<Message.Stored> messages) {
-        public static final Window EMPTY = new Window("", List.of());
-    }
+    public record Window(String summary, List<Message.Stored> messages) {}
 }

@@ -28,7 +28,7 @@ public class AgentExecutor {
     public Context load(ConversationKey key, String originalMessage) {
         AgentMemorySettings.Options options = settings.get(key);
         CompletableFuture<ShortMemory.Window> recent = CompletableFuture.supplyAsync(
-                () -> shortMemory.load(key, options.contextRounds()), executor);
+                () -> shortMemory.load(key), executor);
         CompletableFuture<LongMemory.Context> recalled = CompletableFuture.supplyAsync(
                 () -> longMemory.load(key, originalMessage, options), executor);
         return new Context(recent.join(), recalled.join());
