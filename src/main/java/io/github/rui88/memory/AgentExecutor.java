@@ -5,23 +5,29 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AgentExecutor {
+    private static final Logger log = LoggerFactory.getLogger(AgentExecutor.class);
+
     private final AgentMemorySettings settings;
     private final ShortMemory shortMemory;
     private final LongMemory longMemory;
     private final LanguageModel model;
+    private final ConversationJobs jobs;
     private final Executor executor;
 
-    public AgentExecutor(AgentMemorySettings settings, ShortMemory shortMemory, LongMemory longMemory,
-                         LanguageModel model, @Qualifier("memoryLoadExecutor") Executor executor) {
+    AgentExecutor(AgentMemorySettings settings, ShortMemory shortMemory, LongMemory longMemory,
+                  LanguageModel model, ConversationJobs jobs, @Qualifier("memoryLoadExecutor") Executor executor) {
         this.settings = settings;
         this.shortMemory = shortMemory;
         this.longMemory = longMemory;
         this.model = model;
+        this.jobs = jobs;
         this.executor = executor;
     }
 
@@ -35,6 +41,19 @@ public class AgentExecutor {
     }
 
     public Reply turn(ConversationKey key, String originalMessage) {
+        String active = jobs.startTurn(key);
+        try {
+            return completeTurn(key, originalMessage);
+        } finally {
+            try {
+                jobs.finishTurn(key, active);
+            } catch (RuntimeException error) {
+                log.warn("Could not release active turn lease ({})", error.getClass().getSimpleName());
+            }
+        }
+    }
+
+    private Reply completeTurn(ConversationKey key, String originalMessage) {
         Context context = load(key, originalMessage);
         List<Message> prompt = new ArrayList<>();
         prompt.add(new Message(Message.Role.SYSTEM, """

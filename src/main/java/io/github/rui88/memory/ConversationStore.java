@@ -29,12 +29,22 @@ public class ConversationStore {
                 INSERT INTO conversations (session_key) VALUES (?)
                 ON DUPLICATE KEY UPDATE last_sequence = last_sequence
                 """, key.value());
-        long sequence = jdbc.queryForObject("""
-                SELECT last_sequence FROM conversations WHERE session_key = ? FOR UPDATE
-                """, Long.class, key.value());
+        TurnProgress progress = jdbc.queryForObject("""
+                SELECT last_sequence, completed_turns, open_turn
+                FROM conversations WHERE session_key = ? FOR UPDATE
+                """, (rs, row) -> new TurnProgress(rs.getLong(1), rs.getLong(2), rs.getBoolean(3)), key.value());
+        long sequence = progress.sequence();
+        long completedTurns = progress.completed();
+        boolean openTurn = progress.open();
         List<Message.Stored> stored = new ArrayList<>(messages.size());
         for (Message message : messages) {
             stored.add(new Message.Stored(++sequence, message));
+            if (message.role() == Message.Role.USER) {
+                openTurn = true;
+            } else if (openTurn && message.role() == Message.Role.ASSISTANT && message.toolCalls().isEmpty()) {
+                completedTurns++;
+                openTurn = false;
+            }
         }
         jdbc.batchUpdate("INSERT INTO conversation_messages VALUES (?, ?, ?)", stored, stored.size(),
                 (statement, entry) -> {
@@ -42,7 +52,11 @@ public class ConversationStore {
                     statement.setLong(2, entry.sequence());
                     statement.setString(3, encode(entry.message()));
                 });
-        jdbc.update("UPDATE conversations SET last_sequence = ? WHERE session_key = ?", sequence, key.value());
+        jdbc.update("""
+                UPDATE conversations SET last_sequence = ?, completed_turns = ?, open_turn = ?,
+                    last_activity_at = UTC_TIMESTAMP(6)
+                WHERE session_key = ?
+                """, sequence, completedTurns, openTurn, key.value());
         return stored;
     }
 
@@ -102,4 +116,6 @@ public class ConversationStore {
     public record Summary(long through, String text) {
         static final Summary EMPTY = new Summary(0, null);
     }
+
+    private record TurnProgress(long sequence, long completed, boolean open) {}
 }

@@ -6,7 +6,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class ConversationSummarizer {
-    private static final int MIN_UNCOVERED = 20;
+    static final int MIN_UNCOVERED = 20;
     private static final int INPUT_BUDGET = 12000;
     private static final int SUMMARY_BUDGET = 2000;
     private static final String INSTRUCTIONS = """
@@ -26,6 +26,10 @@ public class ConversationSummarizer {
         this.shortMemory = shortMemory;
         this.model = model;
         this.tokens = tokens;
+    }
+
+    boolean configured() {
+        return model.configured();
     }
 
     public boolean refresh(ConversationKey key, long through) {
