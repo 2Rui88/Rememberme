@@ -1,9 +1,9 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
-import static io.github.rui88.memory.Message.Role.ASSISTANT;
-import static io.github.rui88.memory.Message.Role.SYSTEM;
-import static io.github.rui88.memory.Message.Role.TOOL;
-import static io.github.rui88.memory.Message.Role.USER;
+import static io.github.rui88.memory.model.Message.Role.ASSISTANT;
+import static io.github.rui88.memory.model.Message.Role.SYSTEM;
+import static io.github.rui88.memory.model.Message.Role.TOOL;
+import static io.github.rui88.memory.model.Message.Role.USER;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,6 +13,9 @@ import java.util.Set;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.rui88.memory.llm.TextTokens;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;

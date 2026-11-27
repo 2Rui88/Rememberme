@@ -1,10 +1,15 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import io.github.rui88.memory.llm.LanguageModel;
+import io.github.rui88.memory.longterm.AgentMemorySettings;
+import io.github.rui88.memory.longterm.LongMemory;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;

@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.rui88.memory.model.ConversationKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;

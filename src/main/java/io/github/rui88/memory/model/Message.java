@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.model;
 
 import java.util.List;
 import java.util.Locale;

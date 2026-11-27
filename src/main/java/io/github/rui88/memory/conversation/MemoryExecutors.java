@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
 import java.util.concurrent.Executor;
 

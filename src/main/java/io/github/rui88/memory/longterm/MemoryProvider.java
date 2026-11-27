@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -6,6 +6,8 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+
+import io.github.rui88.memory.model.ConversationKey;
 
 public interface MemoryProvider {
     Kind kind();

@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.model;
 
 import java.util.regex.Pattern;
 
@@ -22,7 +22,7 @@ public record ConversationKey(String tenant, String user, String agent, String s
         return tenant + "/" + user + "/" + agent + "/" + session;
     }
 
-    static ConversationKey fromValue(String value) {
+    public static ConversationKey fromValue(String value) {
         String[] parts = value.split("/", -1);
         return new ConversationKey(parts[0], parts[1], parts[2], parts[3]);
     }

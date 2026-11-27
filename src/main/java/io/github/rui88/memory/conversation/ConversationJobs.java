@@ -1,11 +1,12 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
-import static io.github.rui88.memory.ConversationSummarizer.MIN_UNCOVERED;
+import static io.github.rui88.memory.conversation.ConversationSummarizer.MIN_UNCOVERED;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
+import io.github.rui88.memory.model.ConversationKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;

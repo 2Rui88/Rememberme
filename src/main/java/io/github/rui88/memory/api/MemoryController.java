@@ -1,9 +1,16 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.api;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
+import io.github.rui88.memory.conversation.AgentExecutor;
+import io.github.rui88.memory.conversation.SessionEndMemory;
+import io.github.rui88.memory.conversation.ShortMemory;
+import io.github.rui88.memory.llm.LanguageModel;
+import io.github.rui88.memory.longterm.AgentMemorySettings;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;

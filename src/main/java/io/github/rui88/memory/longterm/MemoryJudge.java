@@ -1,7 +1,7 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
-import static io.github.rui88.memory.MemoryProvider.Category;
-import static io.github.rui88.memory.MemoryProvider.Scope;
+import static io.github.rui88.memory.longterm.MemoryProvider.Category;
+import static io.github.rui88.memory.longterm.MemoryProvider.Scope;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -15,6 +15,8 @@ import java.util.stream.Collectors;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.rui88.memory.llm.LanguageModel;
+import io.github.rui88.memory.model.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -133,7 +135,7 @@ public class MemoryJudge {
         return Resolution.STORE;
     }
 
-    static String messageKey(Message message) {
+    public static String messageKey(Message message) {
         return message.role().wireValue() + ":" + message.content();
     }
 

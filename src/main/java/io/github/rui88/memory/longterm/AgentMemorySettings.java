@@ -1,10 +1,11 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
+import io.github.rui88.memory.model.ConversationKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import static io.github.rui88.memory.MemoryProvider.Kind;
+import static io.github.rui88.memory.longterm.MemoryProvider.Kind;
 
 @Service
 public class AgentMemorySettings {

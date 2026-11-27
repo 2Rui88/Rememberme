@@ -1,7 +1,7 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
-import static io.github.rui88.memory.ConversationJobs.Kind.LONG_MEMORY;
-import static io.github.rui88.memory.ConversationJobs.Kind.SUMMARY;
+import static io.github.rui88.memory.conversation.ConversationJobs.Kind.LONG_MEMORY;
+import static io.github.rui88.memory.conversation.ConversationJobs.Kind.SUMMARY;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -16,6 +16,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 
+import io.github.rui88.memory.longterm.AgentMemorySettings;
+import io.github.rui88.memory.longterm.LongMemory;
+import io.github.rui88.memory.longterm.MemoryJudge;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;

@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -13,6 +13,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;

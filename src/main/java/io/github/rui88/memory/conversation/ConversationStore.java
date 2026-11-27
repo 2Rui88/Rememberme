@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -6,6 +6,8 @@ import java.util.List;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;

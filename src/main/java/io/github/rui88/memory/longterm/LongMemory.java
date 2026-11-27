@@ -1,6 +1,6 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
-import static io.github.rui88.memory.MemoryProvider.Scope;
+import static io.github.rui88.memory.longterm.MemoryProvider.Scope;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -10,6 +10,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import io.github.rui88.memory.llm.TextTokens;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

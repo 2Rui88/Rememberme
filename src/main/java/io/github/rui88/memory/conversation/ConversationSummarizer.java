@@ -1,7 +1,11 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.conversation;
 
 import java.util.List;
 
+import io.github.rui88.memory.llm.LanguageModel;
+import io.github.rui88.memory.llm.TextTokens;
+import io.github.rui88.memory.model.ConversationKey;
+import io.github.rui88.memory.model.Message;
 import org.springframework.stereotype.Service;
 
 @Service

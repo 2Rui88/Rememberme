@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.longterm;
 
 import java.util.HashSet;
 import java.util.Locale;

@@ -1,4 +1,4 @@
-package io.github.rui88.memory;
+package io.github.rui88.memory.api;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
