@@ -137,7 +137,11 @@ public class LongMemory {
         if (additions.isEmpty()) {
             return 0;
         }
-        return memos.addBatch(key, scope, List.copyOf(additions)).size();
+        List<String> added = memos.addBatch(key, scope, List.copyOf(additions));
+        if (added.isEmpty()) {
+            throw new IllegalStateException("MemOS did not confirm any memory additions");
+        }
+        return added.size();
     }
 
     private static void addIfDistinct(List<MemoryProvider.Candidate> texts, MemoryProvider.Candidate candidate) {

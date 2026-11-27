@@ -60,13 +60,13 @@ class LongMemoryTest {
         var history = List.of(new Message.Stored(1, new Message(Message.Role.USER, initial.content())),
                 new Message.Stored(2, new Message(Message.Role.USER, "以后改用英文回复")),
                 new Message.Stored(3, new Message(Message.Role.USER, agentRule.content())));
-        when(provider.addBatch(KEY, USER, List.of(initial))).thenReturn(List.of());
+        when(provider.addBatch(KEY, USER, List.of(initial))).thenReturn(List.of("user-id"));
         when(provider.addBatch(KEY, AGENT, List.of(agentRule))).thenReturn(List.of("agent-id"));
         var options = new AgentMemorySettings.Options(true, MemoryProvider.Kind.MEMOS, 20, true);
         LongMemory memory = new LongMemory(List.of(provider), new TextTokens(EncodingType.CL100K_BASE), judge);
 
         assertThat(memory.save(KEY, options, List.of(initial, correction, agentRule), history))
-                .isEqualTo(new LongMemory.WriteResult(2, 0));
+                .isEqualTo(new LongMemory.WriteResult(3, 0));
 
         var ordered = inOrder(provider);
         ordered.verify(provider).addBatch(KEY, USER, List.of(initial));
