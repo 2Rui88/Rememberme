@@ -5,10 +5,12 @@ import static memory.longterm.MemoryProvider.Scope;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.IntConsumer;
 
 import memory.llm.TextTokens;
 import memory.model.ConversationKey;
@@ -60,12 +62,9 @@ public class LongMemory {
     public WriteResult save(ConversationKey key, AgentMemorySettings.Options options,
                             List<MemoryProvider.Candidate> candidates, List<Message.Stored> history) {
         MemoryProvider provider = provider(options.provider());
-        Map<Scope, List<MemoryProvider.Candidate>> byScope = new EnumMap<>(Scope.class);
-        for (MemoryProvider.Candidate candidate : candidates) {
-            byScope.computeIfAbsent(candidate.scope(), unused -> new ArrayList<>()).add(candidate);
-        }
+        Map<Scope, List<MemoryProvider.Candidate>> byScope = groupByScope(candidates);
         if (provider instanceof MemosMemoryProvider memos) {
-            return saveMemos(key, memos, byScope, history);
+            return saveMemos(key, memos, planMemosWrites(byScope), history, () -> {}, index -> {});
         }
         int written = 0;
         int failures = 0;
@@ -103,45 +102,84 @@ public class LongMemory {
         return new WriteResult(written, failures);
     }
 
-    private WriteResult saveMemos(ConversationKey key, MemosMemoryProvider memos,
-                                  Map<Scope, List<MemoryProvider.Candidate>> byScope,
-                                  List<Message.Stored> history) {
-        int written = 0;
-        int failures = 0;
+    public static List<MemosWrite> planMemosWrites(List<MemoryProvider.Candidate> candidates) {
+        return planMemosWrites(groupByScope(candidates));
+    }
+
+    private static List<MemosWrite> planMemosWrites(Map<Scope, List<MemoryProvider.Candidate>> byScope) {
+        List<MemosWrite> writes = new ArrayList<>();
         for (var group : byScope.entrySet()) {
             Scope scope = group.getKey();
-            try {
-                List<MemoryProvider.Candidate> additions = new ArrayList<>();
-                for (MemoryProvider.Candidate candidate : group.getValue()) {
-                    if (candidate.category() != MemoryProvider.Category.CORRECTION) {
-                        addIfDistinct(additions, candidate);
-                    } else {
-                        written += addMemosBatch(key, memos, scope, additions);
+            List<MemoryProvider.Candidate> additions = new ArrayList<>();
+            for (MemoryProvider.Candidate candidate : group.getValue()) {
+                if (candidate.category() == MemoryProvider.Category.CORRECTION) {
+                    if (!additions.isEmpty()) {
+                        writes.add(new MemosWrite(scope, List.copyOf(additions), false));
                         additions.clear();
-                        memos.feedback(key, candidate, history);
-                        written++;
                     }
+                    writes.add(new MemosWrite(scope, List.of(candidate), false));
+                } else {
+                    addIfDistinct(additions, candidate);
                 }
-                written += addMemosBatch(key, memos, scope, additions);
-            } catch (RuntimeException error) {
-                failures++;
-                log.warn("MemOS Cube write or correction failed for scope {} ({})",
-                        scope, error.getClass().getSimpleName());
+            }
+            if (!additions.isEmpty()) {
+                writes.add(new MemosWrite(scope, List.copyOf(additions), false));
             }
         }
-        return new WriteResult(written, failures);
+        return List.copyOf(writes);
+    }
+
+    public WriteResult saveMemos(ConversationKey key, List<MemosWrite> writes, List<Message.Stored> history,
+                                 Runnable renewClaim, IntConsumer confirmWrite) {
+        return saveMemos(key, (MemosMemoryProvider) provider(MemoryProvider.Kind.MEMOS), writes, history,
+                renewClaim, confirmWrite);
+    }
+
+    private static WriteResult saveMemos(ConversationKey key, MemosMemoryProvider memos,
+                                         List<MemosWrite> writes, List<Message.Stored> history,
+                                         Runnable renewClaim, IntConsumer confirmWrite) {
+        int written = 0;
+        Set<Scope> failedScopes = EnumSet.noneOf(Scope.class);
+        for (int index = 0; index < writes.size(); index++) {
+            MemosWrite write = writes.get(index);
+            if (write.confirmed() || failedScopes.contains(write.scope())) {
+                continue;
+            }
+            renewClaim.run();
+            try {
+                MemoryProvider.Candidate first = write.candidates().get(0);
+                if (first.category() == MemoryProvider.Category.CORRECTION) {
+                    memos.feedback(key, first, history);
+                    written++;
+                } else {
+                    written += addMemosBatch(key, memos, write.scope(), write.candidates());
+                }
+            } catch (RuntimeException error) {
+                failedScopes.add(write.scope());
+                log.warn("MemOS Cube write or correction failed for scope {} ({})",
+                        write.scope(), error.getClass().getSimpleName());
+                continue;
+            }
+            confirmWrite.accept(index);
+        }
+        return new WriteResult(written, failedScopes.size());
     }
 
     private static int addMemosBatch(ConversationKey key, MemosMemoryProvider memos, Scope scope,
                                      List<MemoryProvider.Candidate> additions) {
-        if (additions.isEmpty()) {
-            return 0;
-        }
-        List<String> added = memos.addBatch(key, scope, List.copyOf(additions));
+        List<String> added = memos.addBatch(key, scope, additions);
         if (added.isEmpty()) {
             throw new IllegalStateException("MemOS did not confirm any memory additions");
         }
         return added.size();
+    }
+
+    private static Map<Scope, List<MemoryProvider.Candidate>> groupByScope(List<MemoryProvider.Candidate> candidates) {
+        Map<Scope, List<MemoryProvider.Candidate>> byScope = new EnumMap<>(Scope.class);
+        for (MemoryProvider.Candidate candidate : candidates) {
+            byScope.computeIfAbsent(candidate.scope(), unused -> new ArrayList<>()).add(candidate);
+        }
+        return byScope;
     }
 
     private static void addIfDistinct(List<MemoryProvider.Candidate> texts, MemoryProvider.Candidate candidate) {
@@ -173,4 +211,6 @@ public class LongMemory {
     }
 
     public record WriteResult(int written, int failures) {}
+
+    public record MemosWrite(Scope scope, List<MemoryProvider.Candidate> candidates, boolean confirmed) {}
 }

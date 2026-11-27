@@ -2,6 +2,7 @@ package memory.conversation;
 
 import static memory.conversation.ConversationJobs.Kind.LONG_MEMORY;
 import static memory.conversation.ConversationJobs.Kind.SUMMARY;
+import static memory.longterm.MemoryProvider.Kind.MEMOS;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -19,6 +20,7 @@ import java.util.concurrent.RejectedExecutionException;
 import memory.longterm.AgentMemorySettings;
 import memory.longterm.LongMemory;
 import memory.longterm.MemoryJudge;
+import memory.longterm.MemoryProvider;
 import memory.model.ConversationKey;
 import memory.model.Message;
 import org.slf4j.Logger;
@@ -109,7 +111,7 @@ public class SessionEndMemory {
             if (work.kind() == SUMMARY) {
                 summarizer.refresh(work.key(), snapshot.through());
                 retry = false;
-            } else if (consolidate(snapshot)) {
+            } else if (consolidate(snapshot, owner)) {
                 jobs.completeMemory(snapshot, owner);
                 completed = true;
             }
@@ -126,7 +128,7 @@ public class SessionEndMemory {
         }
     }
 
-    private boolean consolidate(ConversationJobs.Snapshot snapshot) {
+    private boolean consolidate(ConversationJobs.Snapshot snapshot, String owner) {
         ConversationKey key = snapshot.key();
         AgentMemorySettings.Options options = settings.get(key);
         if (!options.enabled()) {
@@ -147,10 +149,10 @@ public class SessionEndMemory {
                 hashes.add(hash);
             }
         }
-        if (fresh.isEmpty()) {
+        if (fresh.isEmpty() && (options.provider() != MEMOS || snapshot.memosPlan() == null)) {
             return true;
         }
-        LongMemory.WriteResult result = memory.save(key, options, judge.judge(history, fresh), history);
+        LongMemory.WriteResult result = saveMemories(snapshot, owner, options, history, fresh);
         log.info("Session memory processed through {}: {} written, {} failures",
                 snapshot.through(), result.written(), result.failures());
         if (result.failures() != 0) {
@@ -158,6 +160,22 @@ public class SessionEndMemory {
         }
         markSeen(redisKey, hashes);
         return true;
+    }
+
+    private LongMemory.WriteResult saveMemories(ConversationJobs.Snapshot snapshot, String owner,
+                                                AgentMemorySettings.Options options, List<Message.Stored> history,
+                                                List<Message.Stored> fresh) {
+        ConversationKey key = snapshot.key();
+        ConversationJobs.MemosPlan plan = options.provider() == MEMOS ? snapshot.memosPlan() : null;
+        if (plan == null) {
+            List<MemoryProvider.Candidate> candidates = judge.judge(history, fresh);
+            if (options.provider() != MEMOS || candidates.isEmpty()) {
+                return memory.save(key, options, candidates, history);
+            }
+            plan = jobs.saveMemosPlan(snapshot, owner, LongMemory.planMemosWrites(candidates));
+        }
+        return memory.saveMemos(key, plan.writes(), history, () -> jobs.renewMemoryClaim(key, owner),
+                index -> jobs.confirmMemosWrite(key, owner, index));
     }
 
     private Set<String> previouslySeen(String redisKey) {

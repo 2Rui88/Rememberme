@@ -6,6 +6,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import memory.longterm.LongMemory;
 import memory.model.ConversationKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,7 +20,8 @@ class ConversationJobs {
     private static final String SUMMARY_READY = "c.last_sequence - c.summary_through >= ?";
     private static final String MEMORY_READY = """
             c.last_sequence > c.memory_through AND (
-                c.memory_requested_through > c.memory_through
+                c.memos_write_plan IS NOT NULL
+                OR c.memory_requested_through > c.memory_through
                 OR c.completed_turns - c.memory_turns >= ?
                 OR (c.last_activity_at <= TIMESTAMPADD(SECOND, -?, UTC_TIMESTAMP(6)) AND NOT EXISTS (
                     SELECT 1 FROM conversation_active_turns t
@@ -29,12 +33,13 @@ class ConversationJobs {
     private static final int DISCOVERY_LIMIT = 16;
 
     private final JdbcTemplate jdbc;
+    private final ObjectMapper json;
     private final Duration idleTime;
     private final int batchTurns;
     private final boolean defaultLongEnabled;
     private final Duration activeTurnLease;
 
-    ConversationJobs(JdbcTemplate jdbc, @Value("${memory.long.idle-time:10m}") Duration idleTime,
+    ConversationJobs(JdbcTemplate jdbc, ObjectMapper json, @Value("${memory.long.idle-time:10m}") Duration idleTime,
                      @Value("${memory.long.batch-turns:10}") int batchTurns,
                      @Value("${memory.long.enabled:false}") boolean defaultLongEnabled,
                      @Value("${memory.llm.timeout:45s}") Duration modelTimeout) {
@@ -42,6 +47,7 @@ class ConversationJobs {
             throw new IllegalArgumentException("Memory idle time and batch size must be positive");
         }
         this.jdbc = jdbc;
+        this.json = json;
         this.idleTime = idleTime;
         this.batchTurns = batchTurns;
         this.defaultLongEnabled = defaultLongEnabled;
@@ -117,16 +123,54 @@ class ConversationJobs {
             return null;
         }
         return jdbc.queryForObject("""
-                SELECT last_sequence, completed_turns, memory_through FROM conversations WHERE session_key = ?
-                """, (rs, row) -> new Snapshot(key, rs.getLong(1), rs.getLong(2), rs.getLong(3)), key.value());
+                SELECT last_sequence, completed_turns, memory_through, %s FROM conversations WHERE session_key = ?
+                """.formatted(kind == Kind.LONG_MEMORY ? "memos_write_plan" : "NULL"), (rs, row) -> {
+            String stored = rs.getString(4);
+            MemosPlan plan = stored == null ? null : readMemosPlan(stored);
+            long through = plan == null ? rs.getLong(1) : plan.through();
+            long turns = plan == null ? rs.getLong(2) : plan.turns();
+            return new Snapshot(key, through, turns, rs.getLong(3), plan);
+        }, key.value());
+    }
+
+    MemosPlan saveMemosPlan(Snapshot snapshot, String owner, List<LongMemory.MemosWrite> writes) {
+        MemosPlan plan = new MemosPlan(snapshot.through(), snapshot.turns(), writes);
+        String encoded;
+        try {
+            encoded = json.writeValueAsString(plan);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("Cannot encode MemOS write plan", error);
+        }
+        requireClaim(jdbc.update("""
+                UPDATE conversations SET memos_write_plan = ?
+                WHERE session_key = ? AND memory_claim = ? AND memory_check_after > UTC_TIMESTAMP(6)
+                    AND memos_write_plan IS NULL
+                """, encoded, snapshot.key().value(), owner));
+        return plan;
+    }
+
+    void renewMemoryClaim(ConversationKey key, String owner) {
+        requireClaim(jdbc.update("""
+                UPDATE conversations SET memory_check_after = TIMESTAMPADD(SECOND, ?, UTC_TIMESTAMP(6))
+                WHERE session_key = ? AND memory_claim = ? AND memory_check_after > UTC_TIMESTAMP(6)
+                """, CLAIM_SECONDS, key.value(), owner));
+    }
+
+    void confirmMemosWrite(ConversationKey key, String owner, int index) {
+        requireClaim(jdbc.update("""
+                UPDATE conversations SET memos_write_plan = JSON_SET(memos_write_plan, ?, CAST('true' AS JSON))
+                WHERE session_key = ? AND memory_claim = ? AND memory_check_after > UTC_TIMESTAMP(6)
+                    AND memos_write_plan IS NOT NULL
+                """, "$.writes[" + index + "].confirmed", key.value(), owner));
     }
 
     void completeMemory(Snapshot snapshot, String owner) {
-        jdbc.update("""
+        requireClaim(jdbc.update("""
                 UPDATE conversations
-                SET memory_through = ?, memory_turns = ?, memory_claim = NULL, memory_check_after = NULL
+                SET memory_through = ?, memory_turns = ?, memory_claim = NULL, memory_check_after = NULL,
+                    memos_write_plan = NULL
                 WHERE session_key = ? AND memory_claim = ?
-                """, snapshot.through(), snapshot.turns(), snapshot.key().value(), owner);
+                """, snapshot.through(), snapshot.turns(), snapshot.key().value(), owner));
     }
 
     void release(Kind kind, ConversationKey key, String owner, boolean retry) {
@@ -136,6 +180,20 @@ class ConversationJobs {
                 UPDATE conversations SET %1$s_claim = NULL, %1$s_check_after = %2$s
                 WHERE session_key = ? AND %1$s_claim = ?
                 """.formatted(prefix, nextCheck), key.value(), owner);
+    }
+
+    private MemosPlan readMemosPlan(String encoded) {
+        try {
+            return json.readValue(encoded, MemosPlan.class);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("Cannot decode MemOS write plan", error);
+        }
+    }
+
+    private static void requireClaim(int updated) {
+        if (updated != 1) {
+            throw new IllegalStateException("Conversation memory claim was lost");
+        }
     }
 
     enum Kind {
@@ -148,5 +206,7 @@ class ConversationJobs {
         }
     }
 
-    record Snapshot(ConversationKey key, long through, long turns, long memoryThrough) {}
+    record Snapshot(ConversationKey key, long through, long turns, long memoryThrough, MemosPlan memosPlan) {}
+
+    record MemosPlan(long through, long turns, List<LongMemory.MemosWrite> writes) {}
 }
