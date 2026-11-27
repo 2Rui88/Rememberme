@@ -11,7 +11,7 @@ docker compose up -d --wait mysql redis
 mvn spring-boot:run
 ```
 
-默认地址为 `http://127.0.0.1:8080`。本机应用连接 `127.0.0.1:13306` 的 MySQL 和 `127.0.0.1:16379` 的 Redis。Flyway 在应用启动时执行 `src/main/resources/db/migration/` 下的数据库迁移。
+默认地址为 `http://127.0.0.1:8080`。本机应用连接 `127.0.0.1:13306` 的 MySQL 和 `127.0.0.1:16379` 的 Redis。Flyway 在应用启动时执行 `resources/db/migration/` 下的数据库迁移。
 
 ## 用 Compose 启动整个服务
 
@@ -52,9 +52,13 @@ curl http://127.0.0.1:8080/api/v1/tenants/demo/users/alice/agents/assistant/sett
 
 ## 源码与测试
 
-启动类位于根包，其他源码按职责放在同一层子包里。
+- [src/memory/](src/memory/) 包含启动类和各业务包。
+- [test/memory/](test/memory/) 按对应的业务包存放测试。
+- [resources/](resources/) 存放 Spring Boot 配置和 Flyway 迁移。
 
-| `src/main/java/io/github/rui88/memory/` 下的目录 | 职责 |
+Maven 在根目录的 `pom.xml` 中声明这三个目录。生产代码在 `memory` 包下按职责分组。
+
+| `src/memory/` 下的目录 | 职责 |
 | --- | --- |
 | `api/` | HTTP 路由和请求鉴权 |
 | `conversation/` | 会话读写、短期记忆、摘要、后台任务及其线程池 |

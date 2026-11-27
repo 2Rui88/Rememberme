@@ -2,6 +2,8 @@ FROM maven:3.9.11-eclipse-temurin-17 AS build
 WORKDIR /build
 COPY pom.xml .
 COPY src src
+COPY test test
+COPY resources resources
 RUN --mount=type=cache,target=/root/.m2 mvn -B -q package
 
 FROM eclipse-temurin:17-jre
